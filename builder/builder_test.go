@@ -483,6 +483,25 @@ func testBuilder(t *testing.T, when spec.G, it spec.S) {
 						h.AssertError(t, err, "buildpack 'buildpack-1-id@buildpack-1-version-1' (Buildpack API version 0.1) is incompatible with lifecycle '1.2.3' (Buildpack API version 0.2)")
 					})
 				})
+
+				when("buildpack mixins are not satisfied", func() {
+					it("returns an error", func() {
+						subject.SetMixins([]string{"mixin1", "mixin2"})
+						subject.AddBuildpack(&fakeBuildpack{
+							descriptor: builder.BuildpackDescriptor{
+								API:  api.MustParse("0.2"),
+								Info: bp1v1.Descriptor().Info,
+								Stacks: []builder.Stack{{
+									ID:     "some.stack.id",
+									Mixins: []string{"mixinA", "mixinB", "mixin1", "mixin2", "mixin3"},
+								}},
+							}})
+
+						err := subject.Save(logger)
+
+						h.AssertError(t, err, "buildpack 'buildpack-1-id@buildpack-1-version-1' missing required mixin(s): mixin3, mixinA, mixinB")
+					})
+				})
 			})
 		})
 
@@ -495,7 +514,7 @@ func testBuilder(t *testing.T, when spec.G, it spec.S) {
 			})
 
 			it("should set the lifecycle version successfully", func() {
-				h.AssertEq(t, subject.GetLifecycleDescriptor().Info.Version.String(), "1.2.3")
+				h.AssertEq(t, subject.LifecycleDescriptor().Info.Version.String(), "1.2.3")
 			})
 
 			it("should add the lifecycle binaries as an image layer", func() {
@@ -719,7 +738,7 @@ func testBuilder(t *testing.T, when spec.G, it spec.S) {
 					h.AssertEq(t, metadata.Groups[0].Buildpacks[0].ID, "prev.id")
 					h.AssertEq(t, metadata.Stack.RunImage.Image, "prev/run")
 					h.AssertEq(t, metadata.Stack.RunImage.Mirrors[0], "prev/mirror")
-					h.AssertEq(t, subject.GetLifecycleDescriptor().Info.Version.String(), "6.6.6")
+					h.AssertEq(t, subject.LifecycleDescriptor().Info.Version.String(), "6.6.6")
 
 					// adds new buildpack
 					h.AssertEq(t, metadata.Buildpacks[1].ID, "buildpack-1-id")
@@ -822,9 +841,9 @@ func testBuilder(t *testing.T, when spec.G, it spec.S) {
 			})
 		})
 
-		when("#SetStackInfo", func() {
+		when("#SetStack", func() {
 			it.Before(func() {
-				subject.SetStackInfo(builder.StackConfig{
+				subject.SetStack(builder.StackConfig{
 					RunImage:        "some/run",
 					RunImageMirrors: []string{"some/mirror", "other/mirror"},
 				})
@@ -870,6 +889,23 @@ func testBuilder(t *testing.T, when spec.G, it spec.S) {
 				h.AssertOnTarEntry(t, layerTar, "/platform/env/OTHER_KEY", h.ContentEquals(`other-val`))
 			})
 		})
+
+		when("#SetMixins", func() {
+			it.Before(func() {
+				subject.SetMixins([]string{"mixin1", "mixin2"})
+				h.AssertNil(t, subject.Save(logger))
+				h.AssertEq(t, baseImage.IsSaved(), true)
+			})
+
+			it("adds mixins to the metadata", func() {
+				label, err := baseImage.Label("io.buildpacks.stack.mixins")
+				h.AssertNil(t, err)
+
+				var mixins []string
+				h.AssertNil(t, json.Unmarshal([]byte(label), &mixins))
+				h.AssertSliceContains(t, mixins, "mixin1", "mixin2")
+			})
+		})
 	})
 
 	when("builder exists", func() {
@@ -891,14 +927,14 @@ func testBuilder(t *testing.T, when spec.G, it spec.S) {
 			builderImage = baseImage
 		})
 
-		when("#GetBuilder", func() {
+		when("#Get", func() {
 			it("gets builder from image", func() {
-				bldr, err := builder.GetBuilder(builderImage)
+				bldr, err := builder.Get(builderImage)
 				h.AssertNil(t, err)
-				h.AssertEq(t, bldr.GetBuildpacks()[0].ID, "buildpack-1-id")
-				h.AssertEq(t, bldr.GetBuildpacks()[1].ID, "buildpack-2-id")
+				h.AssertEq(t, bldr.Buildpacks()[0].ID, "buildpack-1-id")
+				h.AssertEq(t, bldr.Buildpacks()[1].ID, "buildpack-2-id")
 
-				order := bldr.GetOrder()
+				order := bldr.Order()
 				h.AssertEq(t, len(order), 1)
 				h.AssertEq(t, len(order[0].Group), 2)
 				h.AssertEq(t, order[0].Group[0].ID, "buildpack-1-id")
@@ -918,7 +954,7 @@ func testBuilder(t *testing.T, when spec.G, it spec.S) {
 				})
 
 				it("should error", func() {
-					_, err := builder.GetBuilder(builderImage)
+					_, err := builder.Get(builderImage)
 					h.AssertError(t, err, "missing label 'io.buildpacks.builder.metadata'")
 				})
 			})

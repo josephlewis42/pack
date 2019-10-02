@@ -2,6 +2,7 @@ package pack
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/Masterminds/semver"
@@ -20,6 +21,8 @@ type CreateBuilderOptions struct {
 	NoPull        bool
 }
 
+// pack create-builder
+// create new builder
 func (c *Client) CreateBuilder(ctx context.Context, opts CreateBuilderOptions) error {
 	if err := validateBuilderConfig(opts.BuilderConfig); err != nil {
 		return errors.Wrap(err, "invalid builder config")
@@ -34,28 +37,62 @@ func (c *Client) CreateBuilder(ctx context.Context, opts CreateBuilderOptions) e
 		return err
 	}
 
+	runImage, err := c.imageFetcher.Fetch(ctx, opts.BuilderConfig.Stack.RunImage, !opts.Publish, !opts.NoPull)
+	if err != nil {
+		return errors.Wrapf(err, "fetching run image %s", style.Symbol(opts.BuilderConfig.Stack.RunImage))
+	}
+
+	// validate build <-> run (builder.toml) -- strict
+
+	// TODO: replace with GetLabel
+	mixinsData, err := baseImage.Label(builder.MixinsLabel)
+	if err != nil {
+		return err
+	}
+	var buildMixins []string
+	if mixinsData != "" {
+		if err := json.Unmarshal([]byte(mixinsData), &buildMixins); err != nil {
+			return err
+		}
+	}
+
+	// TODO: replace with GetLabel
+	mixinsData, err = runImage.Label(builder.MixinsLabel)
+	if err != nil {
+		return err
+	}
+	var runMixins []string
+	if mixinsData != "" {
+		if err := json.Unmarshal([]byte(mixinsData), &runMixins); err != nil {
+			return err
+		}
+	}
+	mixins := mergeMixins(buildMixins, runMixins)
+
 	c.logger.Debugf("Creating builder %s from build-image %s", style.Symbol(opts.BuilderName), style.Symbol(baseImage.Name()))
-	builderImage, err := builder.New(baseImage, opts.BuilderName)
+	bldr, err := builder.New(baseImage, opts.BuilderName)
 	if err != nil {
 		return errors.Wrap(err, "invalid build-image")
 	}
 
-	builderImage.SetDescription(opts.BuilderConfig.Description)
+	bldr.SetDescription(opts.BuilderConfig.Description)
 
-	if builderImage.StackID != opts.BuilderConfig.Stack.ID {
+	if bldr.StackID != opts.BuilderConfig.Stack.ID {
 		return fmt.Errorf(
 			"stack %s from builder config is incompatible with stack %s from build image",
 			style.Symbol(opts.BuilderConfig.Stack.ID),
-			style.Symbol(builderImage.StackID),
+			style.Symbol(bldr.StackID),
 		)
 	}
+
+	bldr.SetMixins(mixins)
 
 	lifecycle, err := c.fetchLifecycle(ctx, opts.BuilderConfig.Lifecycle)
 	if err != nil {
 		return errors.Wrap(err, "fetch lifecycle")
 	}
 
-	if err := builderImage.SetLifecycle(lifecycle); err != nil {
+	if err := bldr.SetLifecycle(lifecycle); err != nil {
 		return errors.Wrap(err, "setting lifecycle")
 	}
 
@@ -80,13 +117,28 @@ func (c *Client) CreateBuilder(ctx context.Context, opts CreateBuilderOptions) e
 			return errors.Wrap(err, "invalid buildpack")
 		}
 
-		builderImage.AddBuildpack(fetchedBp)
+		bldr.AddBuildpack(fetchedBp)
 	}
 
-	builderImage.SetOrder(opts.BuilderConfig.Order)
-	builderImage.SetStackInfo(opts.BuilderConfig.Stack)
+	bldr.SetOrder(opts.BuilderConfig.Order)
+	bldr.SetStack(opts.BuilderConfig.Stack)
 
-	return builderImage.Save(c.logger)
+	return bldr.Save(c.logger)
+}
+
+func mergeMixins(buildMixins []string, runMixins []string) []string {
+	set := map[string]interface{}{}
+	for _, m := range buildMixins {
+		set[m] = nil
+	}
+	for _, m := range runMixins {
+		set[m] = nil
+	}
+	var merged []string
+	for m := range set {
+		merged = append(merged, m)
+	}
+	return merged
 }
 
 func validateBuildpack(bp builder.Buildpack, source, expectedID, expectedBPVersion string) error {

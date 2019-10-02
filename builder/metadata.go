@@ -1,13 +1,17 @@
 package builder
 
-const OrderLabel = "io.buildpacks.buildpack.order"
-const BuildpackLayersLabel = "io.buildpacks.buildpack.layers"
+const (
+	OrderLabel           = "io.buildpacks.buildpack.order"
+	BuildpackLayersLabel = "io.buildpacks.buildpack.layers"
+	MixinsLabel          = "io.buildpacks.stack.mixins"
+)
 
 type BuildpackLayers map[string]map[string]BuildpackLayerInfo
 
 type BuildpackLayerInfo struct {
 	LayerDigest string `json:"layerDigest"`
 	Order       Order  `json:"order,omitempty"`
+	// TODO: mixins?
 }
 
 type Metadata struct {

@@ -136,7 +136,7 @@ func (b *Builder) compatStack(tw *tar.Writer) error {
 }
 
 func (b *Builder) compatOrder(tw *tar.Writer, order Order) error {
-	orderContents, err := orderFileContents(b.GetLifecycleDescriptor().API.BuildpackVersion, order)
+	orderContents, err := orderFileContents(b.LifecycleDescriptor().API.BuildpackVersion, order)
 	if err != nil {
 		return err
 	}
